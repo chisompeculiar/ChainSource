@@ -1,4 +1,4 @@
-;; ChainSource - Supply Chain Transparency Contract with RBAC
+;; ChainSource - Supply Chain Transparency Contract with RBAC and Product History Tracking
 
 (define-constant ERR-NOT-AUTHORIZED (err u100))
 (define-constant ERR-INVALID-ROLE (err u101))
@@ -34,7 +34,18 @@
   }
 )
 
+;; New map for product history
+(define-map product-history 
+  {product-id: uint, change-id: uint} 
+  { 
+    timestamp: uint,
+    location: (string-utf8 100),
+    status: (string-utf8 20)
+  }
+)
+
 (define-data-var product-counter uint u0)
+(define-data-var change-counter uint u0) ;; To track the number of changes for history
 
 (define-private (is-valid-role (role (string-utf8 20)))
   (or 
@@ -143,12 +154,14 @@
   )
 )
 
+;; Update location and add history entry
 (define-public (update-location 
     (product-id uint) 
     (new-location (string-utf8 100)))
   (let (
       (product (safe-get-product product-id))
       (valid-location (is-valid-string-length new-location MAX-STRING-LENGTH-100))
+      (change-id (var-get change-counter))
     )
     (begin
       (asserts! (or 
@@ -156,11 +169,27 @@
         (check-role tx-sender MANUFACTURER)) ERR-NOT-AUTHORIZED)
       (asserts! valid-location ERR-INVALID-INPUT)
       (asserts! (is-some product) ERR-NOT-FOUND)
-      (ok (map-set products product-id
+      ;; Update the product with the new location
+      (map-set products product-id
         (merge (unwrap! product ERR-NOT-FOUND)
-          { current-location: new-location })))
+          { current-location: new-location }))
+      ;; Add a new entry to the product history
+      (map-set product-history {product-id: product-id, change-id: change-id}
+        {
+          timestamp: block-height,
+          location: new-location,
+          status: (get status (unwrap! product ERR-NOT-FOUND))
+        })
+      ;; Increment the change counter
+      (var-set change-counter (+ change-id u1))
+      (ok change-id)
     )
   )
+)
+
+;; New function to get the product's history
+(define-read-only (get-product-history (product-id uint))
+  (map-get? product-history {product-id: product-id, change-id: u0})
 )
 
 (define-read-only (get-product (product-id uint))
